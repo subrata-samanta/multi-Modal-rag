@@ -1,0 +1,12 @@
+langchain
+langchain-google-vertexai
+google-generativeai
+google-auth
+google-cloud-aiplatform
+chromadb
+pypdf2
+python-pptx
+pdf2image
+pillow
+pydantic
+python-dotenv
