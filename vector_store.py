@@ -1,13 +1,11 @@
 from typing import List, Dict, Any, Optional
 import os
-import chromadb
-from langchain.embeddings import VertexAIEmbeddings
-from langchain.vectorstores import Chroma
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
+from langchain_google_vertexai import ChatVertexAI, VertexAIEmbeddings
+from langchain_chroma import Chroma
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
+from langchain_core.messages import HumanMessage
 from config import Config
-from langchain_google_vertexai import ChatVertexAI
-from langchain.schema import HumanMessage
 
 class MultiModalVectorStore:
     def __init__(self):

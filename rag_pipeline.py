@@ -1,8 +1,8 @@
 from typing import List, Dict, Any
 import os
 from langchain_google_vertexai import ChatVertexAI
-from langchain.chains import RetrievalQA
-from langchain.schema import Document
+from langchain_core.documents import Document
+from langchain_core.messages import HumanMessage
 from document_processor import DocumentProcessor
 from vector_store import MultiModalVectorStore
 from config import Config
@@ -20,7 +20,7 @@ class MultiModalRAGPipeline:
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = Config.GOOGLE_CREDENTIALS_PATH
             
             self.llm = ChatVertexAI(
-                model_name="gemini-pro",
+                model_name="gemini-2.5-pro",
                 temperature=0.1
             )
         except Exception as e:
@@ -107,8 +107,8 @@ class MultiModalRAGPipeline:
         Answer:
         """
         
-        # Generate answer
-        response = self.llm(prompt)
+        # Generate answer using invoke method
+        response = self.llm.invoke([HumanMessage(content=prompt)])
         
         # Extract source information
         sources = []
@@ -122,7 +122,7 @@ class MultiModalRAGPipeline:
                 sources.append(source_info)
         
         return {
-            "answer": response,
+            "answer": response.content,
             "sources": sources,
             "context_used": context,
             "num_documents_retrieved": len(relevant_docs)

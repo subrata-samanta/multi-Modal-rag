@@ -1,12 +1,14 @@
 langchain
+langchain-core
 langchain-google-vertexai
+langchain-chroma
+langchain-text-splitters
 google-generativeai
 google-auth
 google-cloud-aiplatform
 chromadb
-pypdf2
+PyMuPDF
 python-pptx
-pdf2image
 pillow
 pydantic
 python-dotenv

@@ -5,8 +5,9 @@ A comprehensive Retrieval-Augmented Generation (RAG) pipeline that processes PDF
 ## Features
 
 - **Multimodal Document Processing**: Handles PDF and PPTX files using vision models
+- **No External Dependencies**: Uses PyMuPDF for PDF processing (no poppler required)
 - **Structured Content Extraction**: Separates text, tables, and visual information
-- **Optimized Retrieval**: Context-aware retrieval based on question type
+- **LLM-Driven Retrieval**: Uses Gemini to analyze query intent and optimize retrieval
 - **Comprehensive Q&A**: Answers questions using text, tabular, and visual data
 - **Clean Architecture**: Modular design for easy maintenance and extension
 
@@ -20,8 +21,10 @@ pip install -r requirements.txt
 2. **Google Cloud Service Account Setup**:
    - Go to Google Cloud Console
    - Create a new project or select an existing one
-   - Enable the Generative AI API
-   - Create a service account with appropriate permissions
+   - Enable the Vertex AI API and Generative AI API
+   - Create a service account with appropriate permissions:
+     - Vertex AI User
+     - Service Account Token Creator
    - Download the service account key as JSON
    - Place the key file as `key.json` in the project root directory
 
@@ -35,11 +38,19 @@ GOOGLE_CREDENTIALS_PATH=your_key_file.json
 python main.py
 ```
 
+## Key Dependencies
+
+- **PyMuPDF (fitz)**: PDF processing without external dependencies (no poppler needed)
+- **python-pptx**: PPTX file handling
+- **LangChain**: Framework for LLM applications
+- **Chroma**: Vector database for embeddings
+- **Google Vertex AI**: Gemini models for vision and text processing
+
 ## Required Google Cloud APIs
 
 Make sure to enable these APIs in your Google Cloud project:
+- Vertex AI API
 - Generative AI API
-- AI Platform API (if using Vertex AI)
 
 ## File Structure
 
