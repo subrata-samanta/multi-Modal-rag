@@ -16,8 +16,9 @@ env/
 venv/
 ENV/
 
-# Database
+# Database and storage
 chroma_db/
+stored_images/
 *.db
 
 # IDE
@@ -29,4 +30,3 @@ chroma_db/
 # OS
 .DS_Store
 Thumbs.db
-key.json

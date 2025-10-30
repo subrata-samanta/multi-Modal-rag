@@ -71,7 +71,8 @@ class MultiModalVectorStore:
                     metadata={
                         "source": item["source"],
                         "page": item["page"],
-                        "type": item["type"]
+                        "type": item["type"],
+                        "image_path": item.get("image_path", "")
                     }
                 )
                 text_docs.append(doc)
@@ -87,7 +88,8 @@ class MultiModalVectorStore:
                 metadata={
                     "source": item["source"],
                     "page": item["page"],
-                    "type": item["type"]
+                    "type": item["type"],
+                    "image_path": item.get("image_path", "")
                 }
             )
             table_docs.append(doc)
@@ -103,7 +105,8 @@ class MultiModalVectorStore:
                 metadata={
                     "source": item["source"],
                     "page": item["page"],
-                    "type": item["type"]
+                    "type": item["type"],
+                    "image_path": item.get("image_path", "")
                 }
             )
             visual_docs.append(doc)

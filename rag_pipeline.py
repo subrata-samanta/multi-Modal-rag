@@ -6,6 +6,7 @@ from langchain_core.messages import HumanMessage
 from document_processor import DocumentProcessor
 from vector_store import MultiModalVectorStore
 from config import Config
+from pathlib import Path
 
 class MultiModalRAGPipeline:
     def __init__(self):
@@ -73,6 +74,39 @@ class MultiModalRAGPipeline:
         
         return "\n".join(context_parts)
     
+    def get_relevant_images(self, documents: List[Document]) -> List[Dict[str, Any]]:
+        """Extract unique image paths from retrieved documents"""
+        image_references = []
+        seen_images = set()
+        
+        for doc in documents:
+            image_path = doc.metadata.get("image_path", "")
+            if image_path and image_path not in seen_images:
+                seen_images.add(image_path)
+                image_references.append({
+                    "image_path": image_path,
+                    "page": doc.metadata.get("page", "Unknown"),
+                    "source": doc.metadata.get("source", "Unknown"),
+                    "type": doc.metadata.get("type", "Unknown")
+                })
+        
+        return image_references
+    
+    def extract_tables_from_context(self, documents: List[Document]) -> List[Dict[str, Any]]:
+        """Extract table content and metadata from documents"""
+        tables = []
+        
+        for doc in documents:
+            if doc.metadata.get("type") == "table":
+                tables.append({
+                    "content": doc.page_content,
+                    "page": doc.metadata.get("page", "Unknown"),
+                    "source": doc.metadata.get("source", "Unknown"),
+                    "image_path": doc.metadata.get("image_path", "")
+                })
+        
+        return tables
+    
     def answer_question(self, question: str) -> Dict[str, Any]:
         """Answer a question using the RAG pipeline"""
         # Retrieve relevant documents
@@ -82,7 +116,9 @@ class MultiModalRAGPipeline:
             return {
                 "answer": "I couldn't find relevant information to answer your question.",
                 "sources": [],
-                "context_used": ""
+                "context_used": "",
+                "relevant_images": [],
+                "relevant_tables": []
             }
         
         # Format context
@@ -121,11 +157,17 @@ class MultiModalRAGPipeline:
             if source_info not in sources:
                 sources.append(source_info)
         
+        # Get relevant images and tables for verification
+        relevant_images = self.get_relevant_images(relevant_docs)
+        relevant_tables = self.extract_tables_from_context(relevant_docs)
+        
         return {
             "answer": response.content,
             "sources": sources,
             "context_used": context,
-            "num_documents_retrieved": len(relevant_docs)
+            "num_documents_retrieved": len(relevant_docs),
+            "relevant_images": relevant_images,
+            "relevant_tables": relevant_tables
         }
     
     def get_document_summary(self) -> Dict[str, int]:
