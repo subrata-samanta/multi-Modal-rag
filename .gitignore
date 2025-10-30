@@ -17,6 +17,7 @@ venv/
 ENV/
 
 # Database and storage
+extraction_logs/
 chroma_db/
 stored_images/
 *.db

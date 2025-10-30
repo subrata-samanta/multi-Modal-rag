@@ -41,7 +41,7 @@ class Config:
     If no tables are found, respond with "No tables found."
     """
     
-    VISUAL ANALYSIS_PROMPT = """
+    VISUAL_ANALYSIS_PROMPT = """
     Analyze this image and describe any visual elements that convey information:
     
     1. **Charts and Graphs**: Describe type (bar, line, pie, etc.), axes, trends, and key insights
