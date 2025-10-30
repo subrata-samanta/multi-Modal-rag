@@ -39,6 +39,85 @@ class MultiModalRAGPipeline:
         
         print("Document successfully ingested!")
     
+    def ingest_document_with_logging(self, file_path: str, log_file, display_callback):
+        """Ingest a document with page-by-page logging and display"""
+        from document_processor import DocumentProcessor
+        
+        print(f"Processing document: {file_path}")
+        
+        # Get document processor
+        processor = self.document_processor
+        
+        # Convert document to images
+        file_ext = os.path.splitext(file_path)[1].lower()
+        if file_ext == '.pdf':
+            images = processor.convert_pdf_to_images(file_path)
+        elif file_ext == '.pptx':
+            images = processor.convert_pptx_to_images(file_path)
+        else:
+            raise ValueError(f"Unsupported file type: {file_ext}")
+        
+        processed_content = {
+            "text": [],
+            "tables": [],
+            "visuals": []
+        }
+        
+        # Process each page/slide
+        for page_num, image in enumerate(images):
+            print(f"\nProcessing page {page_num + 1}/{len(images)}...")
+            
+            # Extract text content
+            text_content = processor.extract_content_from_image(image, "text")
+            if text_content.strip():
+                processed_content["text"].append({
+                    "content": text_content,
+                    "page": page_num + 1,
+                    "source": file_path,
+                    "type": "text"
+                })
+            
+            # Extract table content
+            table_content = processor.extract_content_from_image(image, "table")
+            if table_content.strip() and "table" in table_content.lower():
+                processed_content["tables"].append({
+                    "content": table_content,
+                    "page": page_num + 1,
+                    "source": file_path,
+                    "type": "table"
+                })
+            
+            # Extract visual content
+            visual_content = processor.extract_content_from_image(image, "visual")
+            if visual_content.strip():
+                processed_content["visuals"].append({
+                    "content": visual_content,
+                    "page": page_num + 1,
+                    "source": file_path,
+                    "type": "visual"
+                })
+            
+            # Display and log the extracted content for this page
+            display_callback(page_num + 1, text_content, table_content, visual_content, log_file)
+        
+        # Add all processed content to vector stores
+        self.vector_store.add_documents(processed_content)
+        
+        print("\nDocument successfully ingested!")
+        
+        # Return summary for logging
+        summary = f"\n{'='*80}\n"
+        summary += f"DOCUMENT PROCESSING SUMMARY\n"
+        summary += f"{'='*80}\n"
+        summary += f"Total Pages/Slides: {len(images)}\n"
+        summary += f"Text Chunks: {len(processed_content['text'])}\n"
+        summary += f"Table Entries: {len(processed_content['tables'])}\n"
+        summary += f"Visual Descriptions: {len(processed_content['visuals'])}\n"
+        summary += f"{'='*80}\n"
+        
+        log_file.write(summary)
+        return summary
+    
     def format_context(self, documents: List[Document]) -> str:
         """Format retrieved documents into context for the LLM"""
         context_parts = []
