@@ -42,7 +42,7 @@ class MultiModalVectorStore:
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = Config.GOOGLE_CREDENTIALS_PATH
             
             self.embeddings = VertexAIEmbeddings(
-                model_name="textembedding-gecko@001"
+                model_name="google-text-embedding-004"
             )
         except Exception as e:
             raise Exception(f"Failed to setup embeddings: {e}")
