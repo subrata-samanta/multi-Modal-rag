@@ -388,10 +388,29 @@ class MultiModalRAGPipeline:
         
         return tables
     
-    def answer_question(self, question: str) -> Dict[str, Any]:
-        """Answer a question using the RAG pipeline"""
-        # Retrieve relevant documents
-        relevant_docs = self.vector_store.get_contextual_documents(question)
+    def answer_question(self, question: str, mode: str = "auto") -> Dict[str, Any]:
+        """Answer a question using the RAG pipeline with different inference modes
+        
+        Args:
+            question: The user's question
+            mode: Inference mode - "auto", "text", or "multimodal"
+                - auto: LLM determines the best retrieval strategy
+                - text: Only use text content for faster responses
+                - multimodal: Use all content types (text, tables, visuals)
+        """
+        # Retrieve relevant documents based on mode
+        if mode == "text":
+            # Text-only mode: retrieve only from text store
+            relevant_docs = self.vector_store.text_store.similarity_search(question, k=5)
+        elif mode == "multimodal":
+            # Multimodal mode: retrieve from all stores with equal weight
+            text_docs = self.vector_store.text_store.similarity_search(question, k=3)
+            table_docs = self.vector_store.table_store.similarity_search(question, k=3)
+            visual_docs = self.vector_store.visual_store.similarity_search(question, k=3)
+            relevant_docs = text_docs + table_docs + visual_docs
+        else:
+            # Auto mode: use LLM-driven contextual retrieval
+            relevant_docs = self.vector_store.get_contextual_documents(question)
         
         if not relevant_docs:
             return {
@@ -399,7 +418,8 @@ class MultiModalRAGPipeline:
                 "sources": [],
                 "context_used": "",
                 "relevant_images": [],
-                "relevant_tables": []
+                "relevant_tables": [],
+                "num_documents_retrieved": 0
             }
         
         # Format context
@@ -445,6 +465,20 @@ class MultiModalRAGPipeline:
             "answer": answer_content,
             "sources": sources,
             "context_used": context,
+            "num_documents_retrieved": len(relevant_docs),
             "relevant_images": self.get_relevant_images(relevant_docs),
             "relevant_tables": self.extract_tables_from_context(relevant_docs)
+        }
+    
+    def get_document_summary(self) -> Dict[str, int]:
+        """Get summary of ingested documents"""
+        text_count = len(self.vector_store.text_store.get()['documents'])
+        table_count = len(self.vector_store.table_store.get()['documents'])
+        visual_count = len(self.vector_store.visual_store.get()['documents'])
+        
+        return {
+            "text_chunks": text_count,
+            "table_entries": table_count,
+            "visual_descriptions": visual_count,
+            "total_entries": text_count + table_count + visual_count
         }
