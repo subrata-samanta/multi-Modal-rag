@@ -11,9 +11,12 @@ class MultiModalVectorStore:
     def __init__(self):
         self._setup_embeddings()
         self._setup_query_analyzer()
+        
+        # Use smaller chunk sizes to avoid token limit issues
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=Config.CHUNK_SIZE,
-            chunk_overlap=Config.CHUNK_OVERLAP
+            chunk_size=1000,  # Reduced from default
+            chunk_overlap=200,
+            separators=["\n\n", "\n", ". ", " ", ""]
         )
         
         # Initialize separate collections for different content types
@@ -58,61 +61,134 @@ class MultiModalVectorStore:
         except Exception as e:
             raise Exception(f"Failed to setup query analyzer LLM: {e}")
     
+    def _chunk_large_content(self, content: str, max_chunk_size: int = 1000) -> List[str]:
+        """Chunk large content to avoid token limits"""
+        chunks = self.text_splitter.split_text(content)
+        
+        # Further split if chunks are still too large
+        final_chunks = []
+        for chunk in chunks:
+            if len(chunk) > max_chunk_size * 4:  # Rough token estimate (4 chars per token)
+                # Split by sentences if chunk is too large
+                sentences = chunk.split('. ')
+                current_chunk = ""
+                for sentence in sentences:
+                    if len(current_chunk) + len(sentence) < max_chunk_size * 4:
+                        current_chunk += sentence + ". "
+                    else:
+                        if current_chunk:
+                            final_chunks.append(current_chunk.strip())
+                        current_chunk = sentence + ". "
+                if current_chunk:
+                    final_chunks.append(current_chunk.strip())
+            else:
+                final_chunks.append(chunk)
+        
+        return final_chunks
+    
     def add_documents(self, processed_content: Dict[str, List[Dict[str, Any]]]):
-        """Add processed documents to respective vector stores"""
+        """Add processed documents to respective vector stores with batching"""
+        from tqdm import tqdm
         
         # Process text content
         text_docs = []
-        for item in processed_content["text"]:
-            chunks = self.text_splitter.split_text(item["content"])
-            for chunk in chunks:
-                doc = Document(
-                    page_content=chunk,
-                    metadata={
-                        "source": item["source"],
-                        "page": item["page"],
-                        "type": item["type"],
-                        "image_path": item.get("image_path", "")
-                    }
-                )
-                text_docs.append(doc)
+        print("Processing text content...")
+        for item in tqdm(processed_content["text"], desc="Chunking text", unit="page"):
+            try:
+                chunks = self._chunk_large_content(item["content"])
+                for chunk_idx, chunk in enumerate(chunks):
+                    doc = Document(
+                        page_content=chunk,
+                        metadata={
+                            "source": item["source"],
+                            "page": item["page"],
+                            "type": item["type"],
+                            "chunk_index": chunk_idx,
+                            "image_path": item.get("image_path", "")
+                        }
+                    )
+                    text_docs.append(doc)
+            except Exception as e:
+                print(f"Error chunking text from page {item['page']}: {e}")
         
+        # Add text documents in batches
         if text_docs:
-            self.text_store.add_documents(text_docs)
+            batch_size = 50
+            print(f"Adding {len(text_docs)} text chunks to vector store...")
+            for i in tqdm(range(0, len(text_docs), batch_size), desc="Adding text batches"):
+                batch = text_docs[i:i+batch_size]
+                try:
+                    self.text_store.add_documents(batch)
+                except Exception as e:
+                    print(f"Error adding text batch {i//batch_size + 1}: {e}")
         
         # Process table content
         table_docs = []
-        for item in processed_content["tables"]:
-            doc = Document(
-                page_content=item["content"],
-                metadata={
-                    "source": item["source"],
-                    "page": item["page"],
-                    "type": item["type"],
-                    "image_path": item.get("image_path", "")
-                }
-            )
-            table_docs.append(doc)
+        print("Processing table content...")
+        for item in tqdm(processed_content["tables"], desc="Processing tables", unit="table"):
+            try:
+                # Tables might be large, chunk them too
+                chunks = self._chunk_large_content(item["content"], max_chunk_size=1500)
+                for chunk_idx, chunk in enumerate(chunks):
+                    doc = Document(
+                        page_content=chunk,
+                        metadata={
+                            "source": item["source"],
+                            "page": item["page"],
+                            "type": item["type"],
+                            "chunk_index": chunk_idx,
+                            "image_path": item.get("image_path", "")
+                        }
+                    )
+                    table_docs.append(doc)
+            except Exception as e:
+                print(f"Error processing table from page {item['page']}: {e}")
         
+        # Add table documents in batches
         if table_docs:
-            self.table_store.add_documents(table_docs)
+            batch_size = 30
+            print(f"Adding {len(table_docs)} table chunks to vector store...")
+            for i in tqdm(range(0, len(table_docs), batch_size), desc="Adding table batches"):
+                batch = table_docs[i:i+batch_size]
+                try:
+                    self.table_store.add_documents(batch)
+                except Exception as e:
+                    print(f"Error adding table batch {i//batch_size + 1}: {e}")
         
         # Process visual content
         visual_docs = []
-        for item in processed_content["visuals"]:
-            doc = Document(
-                page_content=item["content"],
-                metadata={
-                    "source": item["source"],
-                    "page": item["page"],
-                    "type": item["type"],
-                    "image_path": item.get("image_path", "")
-                }
-            )
-            visual_docs.append(doc)
+        print("Processing visual content...")
+        for item in tqdm(processed_content["visuals"], desc="Processing visuals", unit="visual"):
+            try:
+                # Visual descriptions can also be large
+                chunks = self._chunk_large_content(item["content"], max_chunk_size=1500)
+                for chunk_idx, chunk in enumerate(chunks):
+                    doc = Document(
+                        page_content=chunk,
+                        metadata={
+                            "source": item["source"],
+                            "page": item["page"],
+                            "type": item["type"],
+                            "chunk_index": chunk_idx,
+                            "image_path": item.get("image_path", "")
+                        }
+                    )
+                    visual_docs.append(doc)
+            except Exception as e:
+                print(f"Error processing visual from page {item['page']}: {e}")
         
+        # Add visual documents in batches
         if visual_docs:
-            self.visual_store.add_documents(visual_docs)
+            batch_size = 30
+            print(f"Adding {len(visual_docs)} visual chunks to vector store...")
+            for i in tqdm(range(0, len(visual_docs), batch_size), desc="Adding visual batches"):
+                batch = visual_docs[i:i+batch_size]
+                try:
+                    self.visual_store.add_documents(batch)
+                except Exception as e:
+                    print(f"Error adding visual batch {i//batch_size + 1}: {e}")
+        
+        print(f"✓ Successfully added {len(text_docs)} text, {len(table_docs)} table, and {len(visual_docs)} visual chunks")
     
     def search_relevant_content(self, query: str, k: int = 3) -> Dict[str, List[Document]]:
         """Search across all content types and return relevant documents"""
