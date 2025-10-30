@@ -12,3 +12,4 @@ python-pptx
 pillow
 pydantic
 python-dotenv
+tqdm

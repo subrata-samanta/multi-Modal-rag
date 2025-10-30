@@ -1,6 +1,8 @@
 import os
 from rag_pipeline import MultiModalRAGPipeline
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 
 def save_extraction_log(file_path, content, output_folder="extraction_logs", is_error=False):
     """Save extracted content to a text file for review"""
@@ -28,64 +30,60 @@ def save_extraction_log(file_path, content, output_folder="extraction_logs", is_
     
     return output_path
 
-def display_and_log_page_content(page_num, text_content, table_content, visual_content, log_file):
+def display_and_log_page_content(page_num, text_content, table_content, visual_content, log_file, lock=None):
     """Display and log extracted content for a single page"""
-    print(f"\n{'='*80}")
-    print(f"PAGE {page_num} EXTRACTION RESULTS")
-    print(f"{'='*80}")
+    output = []
+    output.append(f"\n{'='*80}")
+    output.append(f"PAGE {page_num} EXTRACTION RESULTS")
+    output.append(f"{'='*80}")
     
-    # Display and log text content
-    if text_content and text_content.strip():
-        print(f"\n--- TEXT CONTENT ---")
-        print(text_content[:500] + "..." if len(text_content) > 500 else text_content)
-        log_file.write(f"\n{'='*80}\n")
-        log_file.write(f"PAGE {page_num} - TEXT CONTENT\n")
-        log_file.write(f"{'='*80}\n")
-        log_file.write(text_content)
-        log_file.write("\n\n")
+    # Prepare text content
+    if text_content and text_content.strip() and "no text content found" not in text_content.lower():
+        output.append(f"\n--- TEXT CONTENT ---")
+        output.append(text_content[:500] + "..." if len(text_content) > 500 else text_content)
+        log_text = f"\n{'='*80}\nPAGE {page_num} - TEXT CONTENT\n{'='*80}\n{text_content}\n\n"
     else:
-        print(f"\n--- TEXT CONTENT ---")
-        print("No text content found on this page.")
-        log_file.write(f"\n{'='*80}\n")
-        log_file.write(f"PAGE {page_num} - TEXT CONTENT\n")
-        log_file.write(f"{'='*80}\n")
-        log_file.write("No text content found on this page.\n\n")
+        output.append(f"\n--- TEXT CONTENT ---")
+        output.append("No text content found on this page.")
+        log_text = f"\n{'='*80}\nPAGE {page_num} - TEXT CONTENT\n{'='*80}\nNo text content found on this page.\n\n"
     
-    # Display and log table content
-    if table_content and table_content.strip() and "table" in table_content.lower():
-        print(f"\n--- TABLE CONTENT ---")
-        print(table_content[:500] + "..." if len(table_content) > 500 else table_content)
-        log_file.write(f"{'='*80}\n")
-        log_file.write(f"PAGE {page_num} - TABLE CONTENT\n")
-        log_file.write(f"{'='*80}\n")
-        log_file.write(table_content)
-        log_file.write("\n\n")
+    # Prepare table content
+    if table_content and table_content.strip() and "no tables found" not in table_content.lower():
+        output.append(f"\n--- TABLE CONTENT ---")
+        output.append(table_content[:500] + "..." if len(table_content) > 500 else table_content)
+        log_table = f"{'='*80}\nPAGE {page_num} - TABLE CONTENT\n{'='*80}\n{table_content}\n\n"
     else:
-        print(f"\n--- TABLE CONTENT ---")
-        print("No tables found on this page.")
-        log_file.write(f"{'='*80}\n")
-        log_file.write(f"PAGE {page_num} - TABLE CONTENT\n")
-        log_file.write(f"{'='*80}\n")
-        log_file.write("No tables found on this page.\n\n")
+        output.append(f"\n--- TABLE CONTENT ---")
+        output.append("No tables found on this page.")
+        log_table = f"{'='*80}\nPAGE {page_num} - TABLE CONTENT\n{'='*80}\nNo tables found on this page.\n\n"
     
-    # Display and log visual content
-    if visual_content and visual_content.strip():
-        print(f"\n--- VISUAL CONTENT ---")
-        print(visual_content[:500] + "..." if len(visual_content) > 500 else visual_content)
-        log_file.write(f"{'='*80}\n")
-        log_file.write(f"PAGE {page_num} - VISUAL CONTENT\n")
-        log_file.write(f"{'='*80}\n")
-        log_file.write(visual_content)
-        log_file.write("\n\n")
+    # Prepare visual content
+    if visual_content and visual_content.strip() and "no visual elements found" not in visual_content.lower():
+        output.append(f"\n--- VISUAL CONTENT ---")
+        output.append(visual_content[:500] + "..." if len(visual_content) > 500 else visual_content)
+        log_visual = f"{'='*80}\nPAGE {page_num} - VISUAL CONTENT\n{'='*80}\n{visual_content}\n\n"
     else:
-        print(f"\n--- VISUAL CONTENT ---")
-        print("No visual elements found on this page.")
-        log_file.write(f"{'='*80}\n")
-        log_file.write(f"PAGE {page_num} - VISUAL CONTENT\n")
-        log_file.write(f"{'='*80}\n")
-        log_file.write("No visual elements found on this page.\n\n")
+        output.append(f"\n--- VISUAL CONTENT ---")
+        output.append("No visual elements found on this page.")
+        log_visual = f"{'='*80}\nPAGE {page_num} - VISUAL CONTENT\n{'='*80}\nNo visual elements found on this page.\n\n"
     
-    print(f"{'='*80}\n")
+    output.append(f"{'='*80}\n")
+    
+    # Thread-safe printing and logging
+    if lock:
+        # For parallel processing, use tqdm.write for thread-safe output
+        from tqdm import tqdm
+        tqdm.write('\n'.join(output))
+        if log_file:
+            log_file.write(log_text)
+            log_file.write(log_table)
+            log_file.write(log_visual)
+    else:
+        print('\n'.join(output))
+        if log_file:
+            log_file.write(log_text)
+            log_file.write(log_table)
+            log_file.write(log_visual)
 
 def ingest_mode(rag):
     """Handle document/folder ingestion"""
@@ -107,6 +105,10 @@ def ingest_mode(rag):
             print("Unsupported file type. Please use PDF or PPTX files.")
             return
         
+        # Ask for parallel processing
+        use_parallel = input("Use parallel processing for faster extraction? (y/n, default: y): ").strip().lower()
+        use_parallel = use_parallel != 'n'
+        
         try:
             print(f"\nProcessing document: {file_path}")
             
@@ -127,10 +129,18 @@ def ingest_mode(rag):
                 log_file.write(f"{'='*80}\n")
                 log_file.write(f"Source File: {file_path}\n")
                 log_file.write(f"Extraction Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                log_file.write(f"Processing Mode: {'Parallel' if use_parallel else 'Sequential'}\n")
                 log_file.write(f"{'='*80}\n\n")
                 
                 # Ingest document with page-by-page logging
-                extracted_content = rag.ingest_document_with_logging(file_path, log_file, display_and_log_page_content)
+                if use_parallel:
+                    extracted_content = rag.ingest_document_with_parallel_logging(
+                        file_path, log_file, display_and_log_page_content
+                    )
+                else:
+                    extracted_content = rag.ingest_document_with_logging(
+                        file_path, log_file, display_and_log_page_content
+                    )
             
             print("\n✓ Document ingested successfully!")
             print(f"✓ Extraction log saved to: {log_path}")
@@ -171,6 +181,10 @@ def ingest_mode(rag):
             print("The provided path is not a folder.")
             return
         
+        # Ask for parallel processing
+        use_parallel = input("Use parallel processing for faster extraction? (y/n, default: y): ").strip().lower()
+        use_parallel = use_parallel != 'n'
+        
         try:
             # Get all PDF and PPTX files in the folder
             files = [f for f in os.listdir(folder_path) 
@@ -193,11 +207,11 @@ def ingest_mode(rag):
             failed = 0
             corrupted_files = []
             
-            for filename in files:
+            for idx, filename in enumerate(files, 1):
                 file_path = os.path.join(folder_path, filename)
                 try:
                     print(f"\n{'#'*80}")
-                    print(f"Processing: {filename}...")
+                    print(f"Processing file {idx}/{len(files)}: {filename}...")
                     print(f"{'#'*80}")
                     
                     # Create log file path
@@ -217,10 +231,18 @@ def ingest_mode(rag):
                         log_file.write(f"{'='*80}\n")
                         log_file.write(f"Source File: {file_path}\n")
                         log_file.write(f"Extraction Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        log_file.write(f"Processing Mode: {'Parallel' if use_parallel else 'Sequential'}\n")
                         log_file.write(f"{'='*80}\n\n")
                         
                         # Ingest document with page-by-page logging
-                        extracted_content = rag.ingest_document_with_logging(file_path, log_file, display_and_log_page_content)
+                        if use_parallel:
+                            extracted_content = rag.ingest_document_with_parallel_logging(
+                                file_path, log_file, display_and_log_page_content
+                            )
+                        else:
+                            extracted_content = rag.ingest_document_with_logging(
+                                file_path, log_file, display_and_log_page_content
+                            )
                     
                     print(f"\n✓ Successfully ingested: {filename}")
                     print(f"  Log saved: {os.path.basename(log_path)}")

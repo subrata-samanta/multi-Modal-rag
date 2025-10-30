@@ -9,6 +9,8 @@ from pptx.util import Inches
 from langchain_google_vertexai import ChatVertexAI
 from langchain_core.messages import HumanMessage
 from config import Config
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 class DocumentProcessor:
     def __init__(self):
@@ -16,6 +18,7 @@ class DocumentProcessor:
         self.llm = ChatVertexAI(
             model_name="gemini-2.5-pro"
         )
+        self._thread_local = threading.local()
         
     def _setup_authentication(self):
         """Setup Google authentication using service account key file"""
@@ -25,6 +28,14 @@ class DocumentProcessor:
             
         except Exception as e:
             raise Exception(f"Failed to setup Google authentication: {e}")
+    
+    def _get_llm(self):
+        """Get thread-local LLM instance"""
+        if not hasattr(self._thread_local, 'llm'):
+            self._thread_local.llm = ChatVertexAI(
+                model_name="gemini-2.5-pro"
+            )
+        return self._thread_local.llm
     
     def _image_to_base64(self, image: Image.Image) -> str:
         """Convert PIL Image to base64 string"""
@@ -121,7 +132,9 @@ class DocumentProcessor:
                 ]
             )
             
-            response = self.llm.invoke([message])
+            # Use thread-local LLM instance
+            llm = self._get_llm()
+            response = llm.invoke([message])
             
             # Handle different response types
             if hasattr(response, 'content'):
@@ -141,6 +154,116 @@ class DocumentProcessor:
             import traceback
             traceback.print_exc()
             return ""
+    
+    def process_page(self, page_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Process a single page and extract all content types"""
+        image = page_data['image']
+        page_num = page_data['page_num']
+        file_path = page_data['file_path']
+        
+        result = {
+            'page_num': page_num,
+            'text': None,
+            'table': None,
+            'visual': None
+        }
+        
+        # Extract text content
+        text_content = self.extract_content_from_image(image, "text")
+        if text_content.strip() and "no text content found" not in text_content.lower():
+            result['text'] = {
+                "content": text_content,
+                "page": page_num,
+                "source": file_path,
+                "type": "text"
+            }
+        
+        # Extract table content
+        table_content = self.extract_content_from_image(image, "table")
+        if table_content.strip() and "no tables found" not in table_content.lower():
+            result['table'] = {
+                "content": table_content,
+                "page": page_num,
+                "source": file_path,
+                "type": "table"
+            }
+        
+        # Extract visual content
+        visual_content = self.extract_content_from_image(image, "visual")
+        if visual_content.strip() and "no visual elements found" not in visual_content.lower():
+            result['visual'] = {
+                "content": visual_content,
+                "page": page_num,
+                "source": file_path,
+                "type": "visual"
+            }
+        
+        return result
+    
+    def process_document_parallel(self, file_path: str) -> Dict[str, List[Dict[str, Any]]]:
+        """Process document with parallel processing"""
+        file_ext = os.path.splitext(file_path)[1].lower()
+        
+        if file_ext == '.pdf':
+            images = self.convert_pdf_to_images(file_path)
+        elif file_ext == '.pptx':
+            images = self.convert_pptx_to_images(file_path)
+        else:
+            raise ValueError(f"Unsupported file type: {file_ext}")
+        
+        processed_content = {
+            "text": [],
+            "tables": [],
+            "visuals": []
+        }
+        
+        if not Config.ENABLE_MULTIPROCESSING or len(images) < 2:
+            # Fall back to sequential processing for small documents
+            return self.process_document(file_path)
+        
+        # Prepare page data for parallel processing
+        page_data_list = [
+            {
+                'image': image,
+                'page_num': page_num + 1,
+                'file_path': file_path
+            }
+            for page_num, image in enumerate(images)
+        ]
+        
+        # Process pages in parallel
+        print(f"Processing {len(images)} pages with {Config.MAX_WORKERS} workers...")
+        
+        with ThreadPoolExecutor(max_workers=Config.MAX_WORKERS) as executor:
+            # Submit all pages for processing
+            future_to_page = {
+                executor.submit(self.process_page, page_data): page_data['page_num']
+                for page_data in page_data_list
+            }
+            
+            # Collect results as they complete
+            results = {}
+            for future in as_completed(future_to_page):
+                page_num = future_to_page[future]
+                try:
+                    result = future.result()
+                    results[result['page_num']] = result
+                    print(f"✓ Completed page {result['page_num']}/{len(images)}")
+                except Exception as e:
+                    print(f"✗ Error processing page {page_num}: {e}")
+        
+        # Sort results by page number and collect
+        for page_num in sorted(results.keys()):
+            result = results[page_num]
+            
+            if result['text']:
+                processed_content["text"].append(result['text'])
+            if result['table']:
+                processed_content["tables"].append(result['table'])
+            if result['visual']:
+                processed_content["visuals"].append(result['visual'])
+        
+        return processed_content
     
     def process_document(self, file_path: str) -> Dict[str, List[Dict[str, Any]]]:
         """Process document and extract all content types"""
@@ -164,7 +287,7 @@ class DocumentProcessor:
             
             # Extract text content
             text_content = self.extract_content_from_image(image, "text")
-            if text_content.strip():
+            if text_content.strip() and "no text content found" not in text_content.lower():
                 processed_content["text"].append({
                     "content": text_content,
                     "page": page_num + 1,
@@ -174,7 +297,7 @@ class DocumentProcessor:
             
             # Extract table content
             table_content = self.extract_content_from_image(image, "table")
-            if table_content.strip() and "table" in table_content.lower():
+            if table_content.strip() and "no tables found" not in table_content.lower():
                 processed_content["tables"].append({
                     "content": table_content,
                     "page": page_num + 1,
@@ -184,7 +307,7 @@ class DocumentProcessor:
             
             # Extract visual content
             visual_content = self.extract_content_from_image(image, "visual")
-            if visual_content.strip():
+            if visual_content.strip() and "no visual elements found" not in visual_content.lower():
                 processed_content["visuals"].append({
                     "content": visual_content,
                     "page": page_num + 1,
