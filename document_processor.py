@@ -14,7 +14,7 @@ class DocumentProcessor:
     def __init__(self):
         self._setup_authentication()
         self.llm = ChatVertexAI(
-            model_name="gemini-2.0-flash-exp"
+            model_name="gemini-2.5-pro"
         )
         
     def _setup_authentication(self):
@@ -103,24 +103,43 @@ class DocumentProcessor:
             else:
                 raise ValueError(f"Unknown content type: {content_type}")
             
-            # Convert image to base64
-            image_base64 = self._image_to_base64(image)
+            # Convert image to bytes
+            buffered = BytesIO()
+            image.save(buffered, format="PNG")
+            image_bytes = buffered.getvalue()
             
-            # Create message with image
+            # Create message with image using the correct format for Vertex AI
             message = HumanMessage(
                 content=[
                     {"type": "text", "text": prompt},
                     {
                         "type": "image_url",
-                        "image_url": f"data:image/png;base64,{image_base64}"
+                        "image_url": {
+                            "url": f"data:image/png;base64,{base64.b64encode(image_bytes).decode()}"
+                        }
                     }
                 ]
             )
             
             response = self.llm.invoke([message])
-            return response.content
+            
+            # Handle different response types
+            if hasattr(response, 'content'):
+                # If response has content attribute, use it
+                result = response.content
+            elif isinstance(response, dict):
+                # If response is a dict, try to get content
+                result = response.get('content', str(response))
+            else:
+                # Otherwise convert to string
+                result = str(response)
+            
+            return result if isinstance(result, str) else str(result)
+            
         except Exception as e:
             print(f"Error extracting {content_type}: {e}")
+            import traceback
+            traceback.print_exc()
             return ""
     
     def process_document(self, file_path: str) -> Dict[str, List[Dict[str, Any]]]:
