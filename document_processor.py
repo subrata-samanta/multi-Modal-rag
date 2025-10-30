@@ -6,7 +6,6 @@ from PIL import Image
 import fitz  # PyMuPDF
 from pptx import Presentation
 from pptx.util import Inches
-import google.generativeai as genai
 from langchain_google_vertexai import ChatVertexAI
 from langchain_core.messages import HumanMessage
 from config import Config
@@ -14,9 +13,8 @@ from config import Config
 class DocumentProcessor:
     def __init__(self):
         self._setup_authentication()
-        self.vision_model = genai.GenerativeModel('gemini-2.5-pro')
         self.llm = ChatVertexAI(
-            model_name="gemini-2.5-pro"
+            model_name="gemini-2.0-flash-exp"
         )
         
     def _setup_authentication(self):
@@ -25,11 +23,15 @@ class DocumentProcessor:
             # Set environment variable for Google Application Credentials
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = Config.GOOGLE_CREDENTIALS_PATH
             
-            # Configure genai for vision model
-            genai.configure()
-            
         except Exception as e:
             raise Exception(f"Failed to setup Google authentication: {e}")
+    
+    def _image_to_base64(self, image: Image.Image) -> str:
+        """Convert PIL Image to base64 string"""
+        buffered = BytesIO()
+        image.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+        return img_str
     
     def convert_pdf_to_images(self, pdf_path: str) -> List[Image.Image]:
         """Convert PDF pages to images using PyMuPDF (no poppler dependency)"""
@@ -90,7 +92,7 @@ class DocumentProcessor:
             return []
     
     def extract_content_from_image(self, image: Image.Image, content_type: str) -> str:
-        """Extract specific content type from image using Gemini Vision"""
+        """Extract specific content type from image using ChatVertexAI"""
         try:
             if content_type == "text":
                 prompt = Config.TEXT_EXTRACTION_PROMPT
@@ -101,8 +103,22 @@ class DocumentProcessor:
             else:
                 raise ValueError(f"Unknown content type: {content_type}")
             
-            response = self.vision_model.generate_content([prompt, image])
-            return response.text
+            # Convert image to base64
+            image_base64 = self._image_to_base64(image)
+            
+            # Create message with image
+            message = HumanMessage(
+                content=[
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": f"data:image/png;base64,{image_base64}"
+                    }
+                ]
+            )
+            
+            response = self.llm.invoke([message])
+            return response.content
         except Exception as e:
             print(f"Error extracting {content_type}: {e}")
             return ""
