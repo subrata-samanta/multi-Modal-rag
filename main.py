@@ -28,6 +28,65 @@ def save_extraction_log(file_path, content, output_folder="extraction_logs", is_
     
     return output_path
 
+def display_and_log_page_content(page_num, text_content, table_content, visual_content, log_file):
+    """Display and log extracted content for a single page"""
+    print(f"\n{'='*80}")
+    print(f"PAGE {page_num} EXTRACTION RESULTS")
+    print(f"{'='*80}")
+    
+    # Display and log text content
+    if text_content and text_content.strip():
+        print(f"\n--- TEXT CONTENT ---")
+        print(text_content[:500] + "..." if len(text_content) > 500 else text_content)
+        log_file.write(f"\n{'='*80}\n")
+        log_file.write(f"PAGE {page_num} - TEXT CONTENT\n")
+        log_file.write(f"{'='*80}\n")
+        log_file.write(text_content)
+        log_file.write("\n\n")
+    else:
+        print(f"\n--- TEXT CONTENT ---")
+        print("No text content found on this page.")
+        log_file.write(f"\n{'='*80}\n")
+        log_file.write(f"PAGE {page_num} - TEXT CONTENT\n")
+        log_file.write(f"{'='*80}\n")
+        log_file.write("No text content found on this page.\n\n")
+    
+    # Display and log table content
+    if table_content and table_content.strip() and "table" in table_content.lower():
+        print(f"\n--- TABLE CONTENT ---")
+        print(table_content[:500] + "..." if len(table_content) > 500 else table_content)
+        log_file.write(f"{'='*80}\n")
+        log_file.write(f"PAGE {page_num} - TABLE CONTENT\n")
+        log_file.write(f"{'='*80}\n")
+        log_file.write(table_content)
+        log_file.write("\n\n")
+    else:
+        print(f"\n--- TABLE CONTENT ---")
+        print("No tables found on this page.")
+        log_file.write(f"{'='*80}\n")
+        log_file.write(f"PAGE {page_num} - TABLE CONTENT\n")
+        log_file.write(f"{'='*80}\n")
+        log_file.write("No tables found on this page.\n\n")
+    
+    # Display and log visual content
+    if visual_content and visual_content.strip():
+        print(f"\n--- VISUAL CONTENT ---")
+        print(visual_content[:500] + "..." if len(visual_content) > 500 else visual_content)
+        log_file.write(f"{'='*80}\n")
+        log_file.write(f"PAGE {page_num} - VISUAL CONTENT\n")
+        log_file.write(f"{'='*80}\n")
+        log_file.write(visual_content)
+        log_file.write("\n\n")
+    else:
+        print(f"\n--- VISUAL CONTENT ---")
+        print("No visual elements found on this page.")
+        log_file.write(f"{'='*80}\n")
+        log_file.write(f"PAGE {page_num} - VISUAL CONTENT\n")
+        log_file.write(f"{'='*80}\n")
+        log_file.write("No visual elements found on this page.\n\n")
+    
+    print(f"{'='*80}\n")
+
 def ingest_mode(rag):
     """Handle document/folder ingestion"""
     print("\n=== INGESTION MODE ===")
@@ -49,20 +108,33 @@ def ingest_mode(rag):
             return
         
         try:
-            print(f"Processing document: {file_path}")
-            extracted_content = rag.ingest_document(file_path)
+            print(f"\nProcessing document: {file_path}")
             
-            # Ensure content is a string
-            if extracted_content is None:
-                extracted_content = "No content returned from ingestion process."
-            elif not isinstance(extracted_content, str):
-                extracted_content = str(extracted_content)
+            # Create log file path
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            output_dir = os.path.join(base_dir, "extraction_logs")
+            os.makedirs(output_dir, exist_ok=True)
             
-            # Save extraction log
-            log_path = save_extraction_log(file_path, extracted_content, is_error=False)
+            original_filename = os.path.splitext(os.path.basename(file_path))[0]
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_filename = f"{original_filename}_{timestamp}.txt"
+            log_path = os.path.join(output_dir, log_filename)
             
-            print("✓ Document ingested successfully!")
+            # Open log file
+            with open(log_path, 'w', encoding='utf-8') as log_file:
+                log_file.write(f"{'='*80}\n")
+                log_file.write(f"EXTRACTION LOG [SUCCESS]\n")
+                log_file.write(f"{'='*80}\n")
+                log_file.write(f"Source File: {file_path}\n")
+                log_file.write(f"Extraction Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                log_file.write(f"{'='*80}\n\n")
+                
+                # Ingest document with page-by-page logging
+                extracted_content = rag.ingest_document_with_logging(file_path, log_file, display_and_log_page_content)
+            
+            print("\n✓ Document ingested successfully!")
             print(f"✓ Extraction log saved to: {log_path}")
+            
         except Exception as e:
             error_msg = str(e)
             
@@ -124,21 +196,36 @@ def ingest_mode(rag):
             for filename in files:
                 file_path = os.path.join(folder_path, filename)
                 try:
-                    print(f"\nProcessing: {filename}...")
-                    extracted_content = rag.ingest_document(file_path)
+                    print(f"\n{'#'*80}")
+                    print(f"Processing: {filename}...")
+                    print(f"{'#'*80}")
                     
-                    # Ensure content is a string
-                    if extracted_content is None:
-                        extracted_content = "No content returned from ingestion process."
-                    elif not isinstance(extracted_content, str):
-                        extracted_content = str(extracted_content)
+                    # Create log file path
+                    base_dir = os.path.dirname(os.path.abspath(__file__))
+                    output_dir = os.path.join(base_dir, "extraction_logs")
+                    os.makedirs(output_dir, exist_ok=True)
                     
-                    # Save extraction log
-                    log_path = save_extraction_log(file_path, extracted_content, is_error=False)
+                    original_filename = os.path.splitext(os.path.basename(file_path))[0]
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    log_filename = f"{original_filename}_{timestamp}.txt"
+                    log_path = os.path.join(output_dir, log_filename)
                     
-                    print(f"✓ Successfully ingested: {filename}")
+                    # Open log file
+                    with open(log_path, 'w', encoding='utf-8') as log_file:
+                        log_file.write(f"{'='*80}\n")
+                        log_file.write(f"EXTRACTION LOG [SUCCESS]\n")
+                        log_file.write(f"{'='*80}\n")
+                        log_file.write(f"Source File: {file_path}\n")
+                        log_file.write(f"Extraction Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        log_file.write(f"{'='*80}\n\n")
+                        
+                        # Ingest document with page-by-page logging
+                        extracted_content = rag.ingest_document_with_logging(file_path, log_file, display_and_log_page_content)
+                    
+                    print(f"\n✓ Successfully ingested: {filename}")
                     print(f"  Log saved: {os.path.basename(log_path)}")
                     successful += 1
+                    
                 except Exception as e:
                     error_msg = str(e)
                     
@@ -163,7 +250,8 @@ def ingest_mode(rag):
                     print(f"  Error log saved: {os.path.basename(log_path)}")
                     failed += 1
             
-            print(f"\n=== Ingestion Complete ===")
+            print(f"\n{'='*80}")
+            print(f"=== Ingestion Complete ===")
             print(f"Successfully ingested: {successful} file(s)")
             print(f"Failed: {failed} file(s)")
             if corrupted_files:
@@ -175,6 +263,7 @@ def ingest_mode(rag):
             base_dir = os.path.dirname(os.path.abspath(__file__))
             logs_dir = os.path.join(base_dir, "extraction_logs")
             print(f"\nExtraction logs saved to: {logs_dir}")
+            print(f"{'='*80}")
             
         except Exception as e:
             print(f"Error processing folder: {e}")
