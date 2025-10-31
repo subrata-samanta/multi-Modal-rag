@@ -10,6 +10,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from tqdm import tqdm
+from session_manager import ChatSession
 
 class MultiModalRAGPipeline:
     def __init__(self):
@@ -388,15 +389,13 @@ class MultiModalRAGPipeline:
         
         return tables
     
-    def answer_question(self, question: str, mode: str = "auto") -> Dict[str, Any]:
-        """Answer a question using the RAG pipeline with different inference modes
+    def answer_question(self, question: str, mode: str = "auto", session: ChatSession = None) -> Dict[str, Any]:
+        """Answer a question using the RAG pipeline with chat history support
         
         Args:
             question: The user's question
             mode: Inference mode - "auto", "text", or "multimodal"
-                - auto: LLM determines the best retrieval strategy
-                - text: Only use text content for faster responses
-                - multimodal: Use all content types (text, tables, visuals)
+            session: Optional ChatSession object for maintaining conversation context
         """
         # Retrieve relevant documents based on mode
         if mode == "text":
@@ -413,8 +412,15 @@ class MultiModalRAGPipeline:
             relevant_docs = self.vector_store.get_contextual_documents(question)
         
         if not relevant_docs:
+            answer = "I couldn't find relevant information to answer your question."
+            
+            # Add to session history if provided
+            if session:
+                session.add_message("user", question)
+                session.add_message("assistant", answer)
+            
             return {
-                "answer": "I couldn't find relevant information to answer your question.",
+                "answer": answer,
                 "sources": [],
                 "context_used": "",
                 "relevant_images": [],
@@ -425,21 +431,29 @@ class MultiModalRAGPipeline:
         # Format context
         context = self.format_context(relevant_docs)
         
-        # Create prompt with context
+        # Build conversation history if session exists
+        conversation_context = ""
+        if session and len(session.history) > 0:
+            conversation_context = "\nPrevious Conversation:\n" + session.get_context_window(window_size=3) + "\n"
+        
+        # Create prompt with context and conversation history
         prompt = f"""
         Based on the following context from documents, please answer the question.
+        {conversation_context}
         
-        Context:
+        Document Context:
         {context}
         
-        Question: {question}
+        Current Question: {question}
         
         Instructions:
+        - Consider the conversation history to provide contextual answers
         - Use information from text, tables, and visual descriptions as needed
         - If the answer involves data from tables, present it clearly
         - If referencing visual information, explain it in detail
         - Cite which page or section the information comes from
         - If you cannot answer based on the provided context, say so clearly
+        - If the question refers to previous conversation ("that", "it", "the previous"), use the conversation history
         
         Answer:
         """
@@ -458,8 +472,16 @@ class MultiModalRAGPipeline:
             if source_info not in sources:
                 sources.append(source_info)
         
-        # Extract answer content (strip any leading/trailing whitespace)
+        # Extract answer content
         answer_content = response.content.strip()
+        
+        # Add to session history if provided
+        if session:
+            session.add_message("user", question, metadata={"mode": mode})
+            session.add_message("assistant", answer_content, metadata={
+                "sources": sources,
+                "num_documents_retrieved": len(relevant_docs)
+            })
         
         return {
             "answer": answer_content,

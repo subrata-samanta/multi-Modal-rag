@@ -3,6 +3,7 @@ from rag_pipeline import MultiModalRAGPipeline
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
+from session_manager import SessionManager, ChatSession
 
 def save_extraction_log(file_path, content, output_folder="extraction_logs", is_error=False):
     """Save extracted content to a text file for review"""
@@ -290,54 +291,168 @@ def ingest_mode(rag):
         except Exception as e:
             print(f"Error processing folder: {e}")
 
-def inference_mode(rag):
-    """Handle question answering with mode selection"""
+def inference_mode(rag, session_manager: SessionManager):
+    """Handle question answering with mode selection and session support"""
     print("\n=== INFERENCE MODE ===")
-    print("Select inference type:")
-    print("1. Auto (intelligent selection)")
-    print("2. Text-only (faster)")
-    print("3. Multimodal (comprehensive)")
+    
+    # Session management
+    print("\nSession Options:")
+    print("1. Start new conversation")
+    print("2. Continue existing conversation")
+    print("3. View session history")
     print("4. Back to Main Menu")
     
-    mode_choice = input("\nEnter your choice (1-4): ").strip()
+    session_choice = input("\nEnter your choice (1-4): ").strip()
     
-    if mode_choice == "4":
+    if session_choice == "4":
         return
     
-    mode_map = {"1": "auto", "2": "text", "3": "multimodal"}
-    inference_type = mode_map.get(mode_choice)
+    session = None
     
-    if not inference_type:
-        print("Invalid choice.")
+    if session_choice == "1":
+        # Create new session
+        user_id = input("Enter user ID (default: 'default'): ").strip() or "default"
+        session = session_manager.create_session(user_id)
+        print(f"✓ New session created: {session.session_id}")
+    
+    elif session_choice == "2":
+        # Continue existing session
+        user_id = input("Enter user ID (default: 'default'): ").strip() or "default"
+        sessions = session_manager.list_user_sessions(user_id)
+        
+        if not sessions:
+            print("No existing sessions found. Creating new session...")
+            session = session_manager.create_session(user_id)
+        else:
+            print(f"\nFound {len(sessions)} session(s):")
+            for idx, s in enumerate(sessions[:5], 1):
+                print(f"{idx}. Session {s['session_id'][:8]}... ({s['message_count']} messages) - {s['created_at']}")
+            
+            choice = input("\nSelect session number (or press Enter for new): ").strip()
+            if choice and choice.isdigit() and 1 <= int(choice) <= len(sessions):
+                session_id = sessions[int(choice) - 1]['session_id']
+                session = session_manager.get_session(session_id)
+                print(f"✓ Loaded session: {session_id}")
+                
+                # Show recent history
+                if len(session.history) > 0:
+                    print("\n--- Recent Conversation ---")
+                    recent = session.get_history(limit=4)
+                    for msg in recent:
+                        role = "You" if msg["role"] == "user" else "Assistant"
+                        content = msg["content"][:100] + "..." if len(msg["content"]) > 100 else msg["content"]
+                        print(f"{role}: {content}")
+                    print("----------------------------\n")
+            else:
+                session = session_manager.create_session(user_id)
+                print(f"✓ New session created: {session.session_id}")
+    
+    elif session_choice == "3":
+        # View session history
+        user_id = input("Enter user ID (default: 'default'): ").strip() or "default"
+        session_id = input("Enter session ID: ").strip()
+        
+        session = session_manager.get_session(session_id)
+        if not session:
+            print("Session not found.")
+            return
+        
+        print(f"\n=== Session History: {session_id} ===")
+        print(f"User: {session.user_id}")
+        print(f"Created: {session.created_at}")
+        print(f"Messages: {len(session.history)}\n")
+        
+        for idx, msg in enumerate(session.history, 1):
+            role = "YOU" if msg["role"] == "user" else "ASSISTANT"
+            print(f"\n[{idx}] {role} ({msg['timestamp']})")
+            print(f"{msg['content']}\n")
+            print("-" * 80)
+        
+        input("\nPress Enter to continue...")
         return
     
-    print(f"\nInference mode: {inference_type.upper()}")
-    question = input("Enter your question: ").strip()
-    
-    if not question:
-        print("Please enter a valid question.")
-        return
-    
-    print("\nProcessing your question...")
-    try:
-        result = rag.answer_question(question, mode=inference_type)
+    # Main Q&A loop
+    while True:
+        print("\n" + "="*50)
+        print("Select inference type:")
+        print("1. Auto (intelligent selection)")
+        print("2. Text-only (faster)")
+        print("3. Multimodal (comprehensive)")
+        print("4. Clear conversation history")
+        print("5. Save and exit to main menu")
         
-        print(f"\n=== ANSWER ===")
-        print(result["answer"])
+        mode_choice = input("\nEnter your choice (1-5): ").strip()
         
-        print(f"\n=== SOURCES ===")
-        for source in result["sources"]:
-            print(f"- {source['source']} (Page {source['page']}, Type: {source['type']})")
+        if mode_choice == "4":
+            if session:
+                session.clear_history()
+                print("✓ Conversation history cleared.")
+            continue
         
-        print(f"\n=== RETRIEVAL INFO ===")
-        print(f"Documents retrieved: {result['num_documents_retrieved']}")
+        if mode_choice == "5":
+            if session:
+                session_manager.save_session(session)
+                print(f"✓ Session saved: {session.session_id}")
+            return
         
-    except Exception as e:
-        print(f"Error answering question: {e}")
+        mode_map = {"1": "auto", "2": "text", "3": "multimodal"}
+        inference_type = mode_map.get(mode_choice)
+        
+        if not inference_type:
+            print("Invalid choice.")
+            continue
+        
+        print(f"\nInference mode: {inference_type.upper()}")
+        print("(Type 'back' to return to menu, 'exit' to quit)")
+        
+        question = input("Enter your question: ").strip()
+        
+        if not question:
+            print("Please enter a valid question.")
+            continue
+        
+        if question.lower() == 'back':
+            break
+        
+        if question.lower() == 'exit':
+            if session:
+                session_manager.save_session(session)
+                print(f"✓ Session saved: {session.session_id}")
+            return
+        
+        print("\nProcessing your question...")
+        try:
+            result = rag.answer_question(question, mode=inference_type, session=session)
+            
+            print(f"\n{'='*80}")
+            print(f"ANSWER")
+            print(f"{'='*80}")
+            print(result["answer"])
+            
+            print(f"\n{'='*80}")
+            print(f"SOURCES")
+            print(f"{'='*80}")
+            for source in result["sources"]:
+                print(f"- {source['source']} (Page {source['page']}, Type: {source['type']})")
+            
+            print(f"\n{'='*80}")
+            print(f"RETRIEVAL INFO")
+            print(f"{'='*80}")
+            print(f"Documents retrieved: {result['num_documents_retrieved']}")
+            
+            # Auto-save session after each interaction
+            if session:
+                session_manager.save_session(session)
+            
+        except Exception as e:
+            print(f"Error answering question: {e}")
+            import traceback
+            traceback.print_exc()
 
 def main():
-    # Initialize the RAG pipeline
+    # Initialize the RAG pipeline and session manager
     rag = MultiModalRAGPipeline()
+    session_manager = SessionManager()
     
     print("=== Multimodal RAG Pipeline ===")
     print("This pipeline can process PDF and PPTX files using Google Gemini Vision")
@@ -350,22 +465,64 @@ def main():
         print("="*50)
         print("1. Ingestion (Add documents)")
         print("2. Inference (Ask questions)")
-        print("3. Exit")
+        print("3. Session Management")
+        print("4. Exit")
         
-        choice = input("\nEnter your choice (1-3): ").strip()
+        choice = input("\nEnter your choice (1-4): ").strip()
         
         if choice == "1":
             ingest_mode(rag)
         
         elif choice == "2":
-            inference_mode(rag)
+            inference_mode(rag, session_manager)
         
         elif choice == "3":
+            session_management_menu(session_manager)
+        
+        elif choice == "4":
             print("Goodbye!")
             break
         
         else:
-            print("Invalid choice. Please enter 1, 2, or 3.")
+            print("Invalid choice. Please enter 1, 2, 3, or 4.")
+
+def session_management_menu(session_manager: SessionManager):
+    """Session management submenu"""
+    while True:
+        print("\n=== SESSION MANAGEMENT ===")
+        print("1. List all sessions")
+        print("2. Delete session")
+        print("3. Cleanup old sessions")
+        print("4. Back to Main Menu")
+        
+        choice = input("\nEnter your choice (1-4): ").strip()
+        
+        if choice == "1":
+            user_id = input("Enter user ID (default: 'default'): ").strip() or "default"
+            sessions = session_manager.list_user_sessions(user_id)
+            
+            if not sessions:
+                print("No sessions found.")
+            else:
+                print(f"\nFound {len(sessions)} session(s):")
+                for idx, s in enumerate(sessions, 1):
+                    print(f"{idx}. {s['session_id']} - {s['message_count']} messages - {s['created_at']}")
+        
+        elif choice == "2":
+            session_id = input("Enter session ID to delete: ").strip()
+            confirm = input(f"Delete session {session_id}? (y/n): ").strip().lower()
+            if confirm == 'y':
+                session_manager.delete_session(session_id)
+                print("✓ Session deleted.")
+        
+        elif choice == "3":
+            days = input("Delete sessions older than how many days? (default: 30): ").strip()
+            days = int(days) if days.isdigit() else 30
+            session_manager.cleanup_old_sessions(days)
+            print(f"✓ Cleaned up sessions older than {days} days.")
+        
+        elif choice == "4":
+            break
 
 if __name__ == "__main__":
     main()
