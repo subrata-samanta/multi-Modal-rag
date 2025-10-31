@@ -90,12 +90,10 @@ def ingest_mode(rag):
     """Handle document/folder ingestion"""
     print("\n=== INGESTION MODE ===")
     print("1. Ingest Single Document")
-    print("2. Ingest Folder (with sync)")
-    print("3. View Indexed Files")
-    print("4. Remove Document")
-    print("5. Back to Main Menu")
+    print("2. Ingest Folder")
+    print("3. Back to Main Menu")
     
-    choice = input("\nEnter your choice (1-5): ").strip()
+    choice = input("\nEnter your choice (1-3): ").strip()
     
     if choice == "1":
         file_path = input("Enter the path to your PDF or PPTX file: ").strip()
@@ -184,175 +182,114 @@ def ingest_mode(rag):
             print("The provided path is not a folder.")
             return
         
-        # Get all PDF and PPTX files in the folder
-        current_files = [
-            os.path.join(folder_path, f) 
-            for f in os.listdir(folder_path) 
-            if f.lower().endswith(('.pdf', '.pptx'))
-        ]
-        
-        if not current_files:
-            print("No PDF or PPTX files found in the folder.")
-            return
-        
-        # Detect changes
-        print("\nAnalyzing folder for changes...")
-        sync_info = rag.vector_store.indexer.sync_folder(folder_path, current_files)
-        
-        print(f"\n📊 Sync Analysis:")
-        print(f"  🆕 New files: {len(sync_info['new'])}")
-        print(f"  🔄 Modified files: {len(sync_info['modified'])}")
-        print(f"  🗑️  Deleted files: {len(sync_info['deleted'])}")
-        print(f"  ✓ Unchanged files: {len(sync_info['unchanged'])}")
-        
-        if sync_info['new']:
-            print(f"\n  New files:")
-            for f in sync_info['new']:
-                print(f"    - {os.path.basename(f)}")
-        
-        if sync_info['modified']:
-            print(f"\n  Modified files:")
-            for f in sync_info['modified']:
-                print(f"    - {os.path.basename(f)}")
-        
-        if sync_info['deleted']:
-            print(f"\n  Deleted files:")
-            for f in sync_info['deleted']:
-                print(f"    - {os.path.basename(f)}")
-        
-        # Ask for confirmation
-        files_to_process = sync_info['new'] + sync_info['modified']
-        
-        if not files_to_process and not sync_info['deleted']:
-            print("\n✓ All files are up to date. No changes needed.")
-            return
-        
-        confirm = input(f"\nProceed with sync? (y/n): ").strip().lower()
-        if confirm != 'y':
-            print("Sync cancelled.")
-            return
-        
-        # Handle deletions
-        for file_path in sync_info['deleted']:
-            try:
-                print(f"\n🗑️  Removing: {os.path.basename(file_path)}...")
-                count = rag.vector_store.remove_document(file_path)
-                print(f"  Removed {count} chunks")
-            except Exception as e:
-                print(f"  Error removing file: {e}")
-        
-        # Handle new and modified files
+        # Ask for parallel processing
         use_parallel = input("Use parallel processing for faster extraction? (y/n, default: y): ").strip().lower()
         use_parallel = use_parallel != 'n'
         
-        successful = 0
-        failed = 0
-        
-        for file_path in files_to_process:
-            filename = os.path.basename(file_path)
-            is_new = file_path in sync_info['new']
-            status = "🆕 NEW" if is_new else "🔄 UPDATE"
-            
-            try:
-                print(f"\n{'#'*80}")
-                print(f"{status}: {filename}")
-                print(f"{'#'*80}")
-                
-                # Create log file
-                base_dir = os.path.dirname(os.path.abspath(__file__))
-                output_dir = os.path.join(base_dir, "extraction_logs")
-                os.makedirs(output_dir, exist_ok=True)
-                
-                original_filename = os.path.splitext(filename)[0]
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                log_filename = f"{original_filename}_{timestamp}.txt"
-                log_path = os.path.join(output_dir, log_filename)
-                
-                # Process document
-                with open(log_path, 'w', encoding='utf-8') as log_file:
-                    log_file.write(f"{'='*80}\n")
-                    log_file.write(f"EXTRACTION LOG [{status}]\n")
-                    log_file.write(f"{'='*80}\n")
-                    log_file.write(f"Source File: {file_path}\n")
-                    log_file.write(f"Extraction Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                    log_file.write(f"Processing Mode: {'Parallel' if use_parallel else 'Sequential'}\n")
-                    log_file.write(f"{'='*80}\n\n")
-                    
-                    if use_parallel:
-                        rag.ingest_document_with_parallel_logging(
-                            file_path, log_file, display_and_log_page_content
-                        )
-                    else:
-                        rag.ingest_document_with_logging(
-                            file_path, log_file, display_and_log_page_content
-                        )
-                
-                print(f"\n✓ Successfully processed: {filename}")
-                print(f"  Log saved: {os.path.basename(log_path)}")
-                successful += 1
-                
-            except Exception as e:
-                print(f"✗ Failed to process {filename}: {e}")
-                import traceback
-                traceback.print_exc()
-                failed += 1
-        
-        print(f"\n{'='*80}")
-        print(f"=== Sync Complete ===")
-        print(f"Successfully processed: {successful} file(s)")
-        print(f"Failed: {failed} file(s)")
-        print(f"Removed: {len(sync_info['deleted'])} file(s)")
-        print(f"{'='*80}")
-    
-    elif choice == "3":
-        # View indexed files
-        indexed_files = rag.vector_store.get_indexed_files()
-        stats = rag.vector_store.get_indexing_stats()
-        
-        print(f"\n=== INDEXED FILES ===")
-        print(f"Total files: {stats['total_files']}")
-        print(f"Total size: {stats['total_size_mb']} MB")
-        print(f"\nFiles:")
-        
-        for idx, file_info in enumerate(indexed_files, 1):
-            print(f"\n{idx}. {os.path.basename(file_info['path'])}")
-            print(f"   Path: {file_info['path']}")
-            print(f"   Size: {round(file_info['size'] / 1024, 2)} KB")
-            print(f"   Last indexed: {file_info['last_indexed']}")
-    
-    elif choice == "4":
-        # Remove document
-        indexed_files = rag.vector_store.get_indexed_files()
-        
-        if not indexed_files:
-            print("No indexed files found.")
-            return
-        
-        print(f"\n=== INDEXED FILES ===")
-        for idx, file_info in enumerate(indexed_files, 1):
-            print(f"{idx}. {os.path.basename(file_info['path'])}")
-        
-        selection = input("\nEnter file number to remove (or 'cancel'): ").strip()
-        
-        if selection.lower() == 'cancel':
-            return
-        
         try:
-            idx = int(selection) - 1
-            if 0 <= idx < len(indexed_files):
-                file_path = indexed_files[idx]['path']
-                filename = os.path.basename(file_path)
-                
-                confirm = input(f"Remove '{filename}' from index? (y/n): ").strip().lower()
-                if confirm == 'y':
-                    count = rag.vector_store.remove_document(file_path)
-                    print(f"✓ Removed {count} chunks from '{filename}'")
-            else:
-                print("Invalid selection.")
-        except ValueError:
-            print("Invalid input.")
-    
-    # ...existing code...
+            # Get all PDF and PPTX files in the folder
+            files = [f for f in os.listdir(folder_path) 
+                    if f.lower().endswith(('.pdf', '.pptx'))]
+            
+            if not files:
+                print("No PDF or PPTX files found in the folder.")
+                return
+            
+            print(f"\nFound {len(files)} file(s) to process:")
+            for f in files:
+                print(f"  - {f}")
+            
+            confirm = input("\nProceed with ingestion? (y/n): ").strip().lower()
+            if confirm != 'y':
+                print("Folder ingestion cancelled.")
+                return
+            
+            successful = 0
+            failed = 0
+            corrupted_files = []
+            
+            for idx, filename in enumerate(files, 1):
+                file_path = os.path.join(folder_path, filename)
+                try:
+                    print(f"\n{'#'*80}")
+                    print(f"Processing file {idx}/{len(files)}: {filename}...")
+                    print(f"{'#'*80}")
+                    
+                    # Create log file path
+                    base_dir = os.path.dirname(os.path.abspath(__file__))
+                    output_dir = os.path.join(base_dir, "extraction_logs")
+                    os.makedirs(output_dir, exist_ok=True)
+                    
+                    original_filename = os.path.splitext(os.path.basename(file_path))[0]
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    log_filename = f"{original_filename}_{timestamp}.txt"
+                    log_path = os.path.join(output_dir, log_filename)
+                    
+                    # Open log file
+                    with open(log_path, 'w', encoding='utf-8') as log_file:
+                        log_file.write(f"{'='*80}\n")
+                        log_file.write(f"EXTRACTION LOG [SUCCESS]\n")
+                        log_file.write(f"{'='*80}\n")
+                        log_file.write(f"Source File: {file_path}\n")
+                        log_file.write(f"Extraction Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        log_file.write(f"Processing Mode: {'Parallel' if use_parallel else 'Sequential'}\n")
+                        log_file.write(f"{'='*80}\n\n")
+                        
+                        # Ingest document with page-by-page logging
+                        if use_parallel:
+                            extracted_content = rag.ingest_document_with_parallel_logging(
+                                file_path, log_file, display_and_log_page_content
+                            )
+                        else:
+                            extracted_content = rag.ingest_document_with_logging(
+                                file_path, log_file, display_and_log_page_content
+                            )
+                    
+                    print(f"\n✓ Successfully ingested: {filename}")
+                    print(f"  Log saved: {os.path.basename(log_path)}")
+                    successful += 1
+                    
+                except Exception as e:
+                    error_msg = str(e)
+                    
+                    # Create error log
+                    error_content = f"ERROR DETAILS:\n{'-'*80}\n"
+                    error_content += f"Error Type: {type(e).__name__}\n"
+                    error_content += f"Error Message: {error_msg}\n"
+                    error_content += f"\nFull Traceback:\n{'-'*80}\n"
+                    
+                    import traceback
+                    error_content += traceback.format_exc()
+                    
+                    # Save error log
+                    log_path = save_extraction_log(file_path, error_content, is_error=True)
+                    
+                    if "zlib error" in error_msg or "incorrect header" in error_msg or "MuPDF error" in error_msg:
+                        print(f"✗ Failed: {filename} (corrupted or invalid format)")
+                        corrupted_files.append(filename)
+                    else:
+                        print(f"✗ Failed to ingest {filename}: {e}")
+                    
+                    print(f"  Error log saved: {os.path.basename(log_path)}")
+                    failed += 1
+            
+            print(f"\n{'='*80}")
+            print(f"=== Ingestion Complete ===")
+            print(f"Successfully ingested: {successful} file(s)")
+            print(f"Failed: {failed} file(s)")
+            if corrupted_files:
+                print(f"\nCorrupted/Invalid files:")
+                for cf in corrupted_files:
+                    print(f"  - {cf}")
+            
+            # Show extraction logs location
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            logs_dir = os.path.join(base_dir, "extraction_logs")
+            print(f"\nExtraction logs saved to: {logs_dir}")
+            print(f"{'='*80}")
+            
+        except Exception as e:
+            print(f"Error processing folder: {e}")
 
 def inference_mode(rag, session_manager: SessionManager):
     """Handle question answering with mode selection and session support"""
@@ -391,8 +328,7 @@ def inference_mode(rag, session_manager: SessionManager):
             for idx, s in enumerate(sessions[:5], 1):
                 print(f"{idx}. Session {s['session_id'][:8]}... ({s['message_count']} messages) - {s['created_at']}")
             
-            choice = input("\nSelect session number (or press Enter for new): ")
-
+            choice = input("\nSelect session number (or press Enter for new): ").strip()
             if choice and choice.isdigit() and 1 <= int(choice) <= len(sessions):
                 session_id = sessions[int(choice) - 1]['session_id']
                 session = session_manager.get_session(session_id)
