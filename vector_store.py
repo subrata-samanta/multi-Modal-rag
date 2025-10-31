@@ -8,7 +8,8 @@ from langchain_core.messages import HumanMessage
 from config import Config
 
 class MultiModalVectorStore:
-    def __init__(self):
+    def __init__(self, chunking_strategy: str = "semantic"):
+        self.chunking_strategy = chunking_strategy
         self._setup_embeddings()
         self._setup_query_analyzer()
         
@@ -37,6 +38,10 @@ class MultiModalVectorStore:
             embedding_function=self.embeddings,
             persist_directory=f"{Config.PERSIST_DIRECTORY}/visuals"
         )
+        
+        # Initialize document indexer
+        from document_indexer import DocumentIndexer
+        self.indexer = DocumentIndexer(namespace="multimodal_rag")
     
     def _setup_embeddings(self):
         """Setup embeddings with service account authentication"""
@@ -186,16 +191,33 @@ class MultiModalVectorStore:
         
         return sections if sections else [{'content': visual_content, 'type': 'visual_complete'}]
     
-    def add_documents(self, processed_content: Dict[str, List[Dict[str, Any]]]):
-        """Add processed documents with intelligent preservation of tables and visuals"""
+    def add_documents_with_sync(
+        self,
+        processed_content: Dict[str, List[Dict[str, Any]]],
+        file_path: str,
+        cleanup_mode: str = "incremental"
+    ) -> Dict[str, Any]:
+        """
+        Add documents with automatic sync using LangChain indexing API
+        
+        Args:
+            processed_content: Processed document content
+            file_path: Source file path
+            cleanup_mode: "incremental" (update), "full" (replace), or None
+        """
         from tqdm import tqdm
         
-        # Process text content with semantic/intelligent chunking
+        results = {
+            "text": {"added": 0, "updated": 0, "deleted": 0, "skipped": 0},
+            "tables": {"added": 0, "updated": 0, "deleted": 0, "skipped": 0},
+            "visuals": {"added": 0, "updated": 0, "deleted": 0, "skipped": 0}
+        }
+        
+        # Process and index text content
         text_docs = []
         print(f"Processing text content with {self.chunking_strategy} chunking strategy...")
         for item in tqdm(processed_content["text"], desc="Chunking text", unit="page"):
             try:
-                # Use intelligent chunking for text
                 chunks = self._chunk_text_with_strategy(item["content"])
                 
                 for chunk_idx, chunk in enumerate(chunks):
@@ -203,6 +225,7 @@ class MultiModalVectorStore:
                         page_content=chunk,
                         metadata={
                             "source": item["source"],
+                            "source_file": file_path,
                             "page": item["page"],
                             "type": item["type"],
                             "chunk_index": chunk_idx,
@@ -215,27 +238,24 @@ class MultiModalVectorStore:
             except Exception as e:
                 print(f"Error chunking text from page {item['page']}: {e}")
         
-        # Add text documents in batches
         if text_docs:
-            batch_size = 50
-            print(f"Adding {len(text_docs)} text chunks to vector store...")
-            for i in tqdm(range(0, len(text_docs), batch_size), desc="Adding text batches"):
-                batch = text_docs[i:i+batch_size]
-                try:
-                    self.text_store.add_documents(batch)
-                except Exception as e:
-                    print(f"Error adding text batch {i//batch_size + 1}: {e}")
+            print(f"Indexing {len(text_docs)} text chunks...")
+            result = self.indexer.index_documents(
+                text_docs,
+                self.text_store,
+                file_path,
+                cleanup=cleanup_mode
+            )
+            results["text"] = result
         
-        # Process table content - PRESERVE STRUCTURE
+        # Process and index tables
         table_docs = []
         print("Processing table content with structure preservation...")
         for item in tqdm(processed_content["tables"], desc="Processing tables", unit="table"):
             try:
                 content = item["content"]
                 
-                # Check if chunking is necessary
                 if self._should_chunk_content(content, "table"):
-                    # Preserve table structure when chunking
                     table_sections = self._preserve_table_structure(content)
                     
                     for section_idx, section in enumerate(table_sections):
@@ -243,6 +263,7 @@ class MultiModalVectorStore:
                             page_content=section['content'],
                             metadata={
                                 "source": item["source"],
+                                "source_file": file_path,
                                 "page": item["page"],
                                 "type": item["type"],
                                 "chunk_index": section_idx,
@@ -255,11 +276,11 @@ class MultiModalVectorStore:
                         )
                         table_docs.append(doc)
                 else:
-                    # Keep table intact - NO CHUNKING
                     doc = Document(
                         page_content=content,
                         metadata={
                             "source": item["source"],
+                            "source_file": file_path,
                             "page": item["page"],
                             "type": item["type"],
                             "chunk_index": 0,
@@ -275,27 +296,24 @@ class MultiModalVectorStore:
             except Exception as e:
                 print(f"Error processing table from page {item['page']}: {e}")
         
-        # Add table documents in batches
         if table_docs:
-            batch_size = 30
-            print(f"Adding {len(table_docs)} table entries to vector store...")
-            for i in tqdm(range(0, len(table_docs), batch_size), desc="Adding table batches"):
-                batch = table_docs[i:i+batch_size]
-                try:
-                    self.table_store.add_documents(batch)
-                except Exception as e:
-                    print(f"Error adding table batch {i//batch_size + 1}: {e}")
+            print(f"Indexing {len(table_docs)} table entries...")
+            result = self.indexer.index_documents(
+                table_docs,
+                self.table_store,
+                file_path,
+                cleanup=cleanup_mode
+            )
+            results["tables"] = result
         
-        # Process visual content - PRESERVE CONTEXT
+        # Process and index visuals
         visual_docs = []
         print("Processing visual content with context preservation...")
         for item in tqdm(processed_content["visuals"], desc="Processing visuals", unit="visual"):
             try:
                 content = item["content"]
                 
-                # Check if chunking is necessary
                 if self._should_chunk_content(content, "visual"):
-                    # Preserve visual context when chunking
                     visual_sections = self._preserve_visual_structure(content)
                     
                     for section_idx, section in enumerate(visual_sections):
@@ -303,6 +321,7 @@ class MultiModalVectorStore:
                             page_content=section['content'],
                             metadata={
                                 "source": item["source"],
+                                "source_file": file_path,
                                 "page": item["page"],
                                 "type": item["type"],
                                 "chunk_index": section_idx,
@@ -315,11 +334,11 @@ class MultiModalVectorStore:
                         )
                         visual_docs.append(doc)
                 else:
-                    # Keep visual intact - NO CHUNKING
                     doc = Document(
                         page_content=content,
                         metadata={
                             "source": item["source"],
+                            "source_file": file_path,
                             "page": item["page"],
                             "type": item["type"],
                             "chunk_index": 0,
@@ -335,21 +354,54 @@ class MultiModalVectorStore:
             except Exception as e:
                 print(f"Error processing visual from page {item['page']}: {e}")
         
-        # Add visual documents in batches
         if visual_docs:
-            batch_size = 30
-            print(f"Adding {len(visual_docs)} visual entries to vector store...")
-            for i in tqdm(range(0, len(visual_docs), batch_size), desc="Adding visual batches"):
-                batch = visual_docs[i:i+batch_size]
-                try:
-                    self.visual_store.add_documents(batch)
-                except Exception as e:
-                    print(f"Error adding visual batch {i//batch_size + 1}: {e}")
+            print(f"Indexing {len(visual_docs)} visual entries...")
+            result = self.indexer.index_documents(
+                visual_docs,
+                self.visual_store,
+                file_path,
+                cleanup=cleanup_mode
+            )
+            results["visuals"] = result
         
-        print(f"✓ Successfully added:")
-        print(f"  - {len(text_docs)} text chunks")
-        print(f"  - {len(table_docs)} table entries ({sum(1 for d in table_docs if d.metadata.get('is_complete_table'))} complete)")
-        print(f"  - {len(visual_docs)} visual entries ({sum(1 for d in visual_docs if d.metadata.get('is_complete_visual'))} complete)")
+        # Print summary
+        print(f"\n✓ Indexing complete:")
+        print(f"  Text: {results['text']['added']} added, {results['text']['updated']} updated, {results['text']['skipped']} skipped")
+        print(f"  Tables: {results['tables']['added']} added, {results['tables']['updated']} updated, {results['tables']['skipped']} skipped")
+        print(f"  Visuals: {results['visuals']['added']} added, {results['visuals']['updated']} updated, {results['visuals']['skipped']} skipped")
+        
+        return results
+    
+    def remove_document(self, file_path: str) -> int:
+        """Remove all content associated with a file"""
+        vector_stores = {
+            "text": self.text_store,
+            "tables": self.table_store,
+            "visuals": self.visual_store
+        }
+        
+        return self.indexer.remove_file_from_index(file_path, vector_stores)
+    
+    def get_indexed_files(self) -> List[Dict[str, Any]]:
+        """Get list of indexed files"""
+        return self.indexer.get_indexed_files()
+    
+    def get_indexing_stats(self) -> Dict[str, Any]:
+        """Get indexing statistics"""
+        return self.indexer.get_indexing_stats()
+    
+    # Keep the original add_documents for backward compatibility
+    def add_documents(self, processed_content: Dict[str, List[Dict[str, Any]]]):
+        """Legacy method - redirects to add_documents_with_sync"""
+        # Extract file path from first item
+        file_path = None
+        for content_type in ["text", "tables", "visuals"]:
+            if processed_content.get(content_type):
+                file_path = processed_content[content_type][0].get("source")
+                break
+        
+        if file_path:
+            return self.add_documents_with_sync(processed_content, file_path, cleanup_mode="incremental")
     
     def search_relevant_content(self, query: str, k: int = 3) -> Dict[str, List[Document]]:
         """Search with special handling for complete tables/visuals"""
